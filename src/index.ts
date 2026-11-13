@@ -102,6 +102,12 @@ const CHANNEL_PROMPT = [
 
 /** The tool the Agent reaches the phone with. */
 const NOTIFY_TOOL = 'notify_phone'
+const CHOICES_TOOL = 'send_choice_buttons'
+const CHOICES_DESCRIPTION = [
+  'Post a message with buttons to the user\'s phone, in the chats linked to this conversation.',
+  'Each button sends back the `reply` text you attached, as if the user had typed it, so one tap answers a question that would otherwise need an exact command.',
+  'Use it whenever you need a confirmation, a pick between options, or several items to approve or reject one by one. Keep the labels short; the reply carries the full instruction.',
+].join(' ')
 const NOTIFY_DESCRIPTION = [
   'Send a short message to the user\'s phone right now, through the chats linked to this conversation, without ending your turn.',
   'Use it for a milestone in long work or something urgent they should know before you finish. Your final reply reaches them anyway, so do not repeat it here.',
@@ -959,6 +965,64 @@ export function apply(ctx: Context, config: Config): void {
         if (typeof message !== 'string' || message.trim() === '') throw new Error('message must be non-empty text')
         if (exec.agent === undefined) throw new Error(`${NOTIFY_TOOL} requires a calling agent`)
         return bridge.notifyFromAgent(rootSession(exec.agent.session.header), message)
+      },
+    }, {
+      when: ({ agent }) => config.agentNotify.get() && bridge.reachesPhone(rootSession(agent.session.header)),
+    })
+    scope.tools.register({
+      name: CHOICES_TOOL,
+      description: CHOICES_DESCRIPTION,
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['text', 'rows'],
+        properties: {
+          text: { type: 'string', description: 'What the buttons are about, in one to three sentences.' },
+          rows: {
+            type: 'array',
+            description: 'Button rows, at most 4 rows of at most 3 buttons.',
+            items: {
+              type: 'array',
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                required: ['text', 'reply'],
+                properties: {
+                  text: { type: 'string', description: 'Label on the button, a few words.' },
+                  reply: { type: 'string', description: 'Text the user sends by pressing it, worded as their own instruction.' },
+                },
+              },
+            },
+          },
+        },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['delivered'],
+          properties: { delivered: { type: 'integer' }, reason: { type: 'string' } },
+        },
+        render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }],
+      },
+      async execute(args, exec) {
+        const input = args as { text?: unknown; rows?: unknown }
+        if (typeof input.text !== 'string' || input.text.trim() === '') throw new Error('text must be non-empty text')
+        if (!Array.isArray(input.rows) || input.rows.length === 0) throw new Error('rows must be a non-empty array')
+        if (exec.agent === undefined) throw new Error(`${CHOICES_TOOL} requires a calling agent`)
+        const rows: { text: string; reply: string }[][] = []
+        for (const row of input.rows.slice(0, 4)) {
+          if (!Array.isArray(row)) throw new Error('each row must be an array of buttons')
+          const buttons: { text: string; reply: string }[] = []
+          for (const button of row.slice(0, 3)) {
+            const label = (button as { text?: unknown })?.text
+            const reply = (button as { reply?: unknown })?.reply
+            if (typeof label !== 'string' || typeof reply !== 'string' || reply.trim() === '') throw new Error('each button needs text and reply')
+            buttons.push({ text: label, reply })
+          }
+          if (buttons.length > 0) rows.push(buttons)
+        }
+        return bridge.postChoices(rootSession(exec.agent.session.header), input.text, rows)
       },
     }, {
       when: ({ agent }) => config.agentNotify.get() && bridge.reachesPhone(rootSession(agent.session.header)),

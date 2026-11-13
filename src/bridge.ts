@@ -326,6 +326,20 @@ interface PendingApproval {
   extend(): void
 }
 
+/** A button the Agent posts itself; a press sends its `reply` as the owner's next message. */
+export interface ChoiceOption {
+  readonly text: string
+  /** What the owner's chat sends when this button is pressed. */
+  readonly reply: string
+}
+
+/** Buttons posted by the Agent, waiting for a press. */
+interface PendingChoice {
+  readonly sessionId: string
+  readonly options: readonly ChoiceOption[]
+  readonly at: number
+}
+
 /** One question the Agent asked, as a chat shows it. */
 export interface QuestionItem {
   readonly id: string
@@ -548,6 +562,8 @@ const COMMAND_NOTICE_MS = 1000
 /** Streamed text shows once there is this much of it. */
 const DRAFT_MIN_CHARS = 40
 /** Buttons and notices are remembered this long. */
+/** Longest button label a chat shows; platforms cut longer text. */
+const BUTTON_LABEL_LENGTH = 40
 const ACTION_TTL_MS = 24 * 60 * 60 * 1000
 /** Largest diff sent by Show changes. */
 const DIFF_LIMIT_BYTES = 1024 * 1024
@@ -619,6 +635,8 @@ export class Switchboard {
   /** Harness commands in flight, by the short id their cancel button carries. */
   private readonly commandRuns = new Map<string, CommandRun>()
   private readonly approvals = new Map<string, PendingApproval>()
+  /** Buttons the Agent posted, by the short id their data carries. */
+  private readonly choiceCards = new Map<string, PendingChoice>()
   private readonly questions = new Map<string, PendingQuestions>()
   private readonly toolCalls = new Map<string, { name: string; arguments: string }>()
   /** The running turn's progress message per Session. */
@@ -2518,6 +2536,42 @@ export class Switchboard {
     return { delivered: chats.length }
   }
 
+  /**
+   * Post buttons the Agent itself chose, to the chats linked to its Session.
+   * A press comes back as the owner's own message carrying the button's
+   * `reply` text, so a confirmation takes one tap and keeps the Agent's words.
+   * @returns how many chats it went to, or why it did not go out.
+   */
+  postChoices(
+    sessionId: string,
+    text: string,
+    rows: readonly (readonly ChoiceOption[])[],
+    now: number = Date.now(),
+  ): { delivered: number; reason?: 'no-chat' | 'empty' } {
+    const body = text.trim()
+    const chats = [...new Set([...this.outputChats(sessionId), ...this.store.watchersOf(sessionId)])]
+    if (chats.length === 0) return { delivered: 0, reason: 'no-chat' }
+    const id = randomUUID().slice(0, 12)
+    const flat: ChoiceOption[] = []
+    const buttons: Button[][] = []
+    for (const row of rows) {
+      const line: Button[] = []
+      for (const option of row) {
+        const label = option.text.trim()
+        const reply = option.reply.trim()
+        if (label === '' || reply === '') continue
+        line.push({ text: truncate(label, BUTTON_LABEL_LENGTH), data: `ch:${id}:${flat.length}` })
+        flat.push({ text: label, reply })
+      }
+      if (line.length > 0) buttons.push(line)
+    }
+    if (body === '' || flat.length === 0) return { delivered: 0, reason: 'empty' }
+    this.choiceCards.set(id, { sessionId, options: flat, at: now })
+    for (const [old, card] of this.choiceCards) if (now - card.at > ACTION_TTL_MS) this.choiceCards.delete(old)
+    for (const key of chats) void this.enqueue(key, async (channel, chat) => { await channel.send(chat, { text: body, buttons }) })
+    return { delivered: chats.length }
+  }
+
   /** Whether a post from another plugin would reach a chat: the bridge is on and schedule chats are set. */
   canPushToPhone(): boolean {
     const s = this.settings()
@@ -3273,6 +3327,7 @@ export class Switchboard {
     if (action.data.startsWith('qs:') || action.data.startsWith('qx:')) return this.handleQueued(line, action)
     if (action.data.startsWith('ab:')) return this.handleReplyAction(line, action, actor)
     if (action.data.startsWith('mn:')) return this.handleMenu(line, action, actor)
+    if (action.data.startsWith('ch:')) return this.handleChoice(line, action, actor)
     if (action.data.startsWith('qa:')) return this.handleQuestionPress(channel, action, actor)
     if (action.data.startsWith('qw:')) {
       const waiting = this.questions.get(action.data.slice(3))
@@ -3320,6 +3375,29 @@ export class Switchboard {
       pending.settle('rejected', bound ? `${t.approvalRejected(who)}\n${t.rejectReasonHint}` : t.approvalRejected(who), who)
     }
     await channel.ack(action)
+  }
+
+  /** A press on Agent-posted buttons: the chosen reply becomes the owner's message. */
+  private async handleChoice(line: LiveLine, action: InboundAction, actor: Actor): Promise<void> {
+    const [, id, index] = action.data.split(':')
+    const card = id === undefined ? undefined : this.choiceCards.get(id)
+    if (id !== undefined && (card === undefined || Date.now() - card.at > ACTION_TTL_MS)) this.choiceCards.delete(id)
+    if (card === undefined || Date.now() - card.at > ACTION_TTL_MS) {
+      await line.channel.ack(action, this.t.approvalGone)
+      return
+    }
+    if (actor.role === 'guest') {
+      await line.channel.ack(action, this.t.approvalNotYours)
+      return
+    }
+    const chosen = card.options[Number(index)]
+    if (chosen === undefined) {
+      await line.channel.ack(action, this.t.approvalGone)
+      return
+    }
+    await line.channel.ack(action)
+    const key = action.chat === undefined ? '' : chatKey(line.line.id, action.chat.id)
+    await this.promptSession(key, card.sessionId, [{ type: 'text', text: chosen.reply }], 'queue')
   }
 
   private async handleStop(line: LiveLine, action: InboundAction): Promise<void> {

@@ -2435,3 +2435,40 @@ describe('other plugins reaching the phone', () => {
     expect(bridge.pushToPhone('three', 111_000).delivered).toBe(1)
   })
 })
+
+describe('choice buttons', () => {
+  const markupOf = (c: { method: string; params: Record<string, unknown> }) =>
+    c.params['reply_markup'] as { inline_keyboard: { text: string; callback_data: string }[][] } | undefined
+
+  it('posts buttons and turns a press into the owner message', async () => {
+    await store.update(KEY, { sessionId: 's9' })
+    const result = bridge.postChoices('s9', '这些记忆怎么处理？', [[
+      { text: '同意', reply: '批准 abc123' },
+      { text: '拒绝', reply: '拒绝 abc123' },
+    ]])
+    expect(result).toEqual({ delivered: 1 })
+    await until(() => telegram.calls.some(c => markupOf(c) !== undefined))
+    const call = telegram.calls.find(c => markupOf(c) !== undefined)!
+    expect(String(call.params['text'])).toContain('这些记忆怎么处理')
+    const markup = markupOf(call)!
+    expect(markup.inline_keyboard[0]).toHaveLength(2)
+    telegram.push({ callback_query: { id: 'c1', from: USER, data: markup.inline_keyboard[0]![1]!.callback_data } })
+    await until(() => harness.prompts.length === 1)
+    expect(harness.prompts[0]).toEqual({ sessionId: 's9', parts: [{ type: 'text', text: '拒绝 abc123' }], mode: 'queue' })
+  })
+
+  it('asks nothing of a Session no chat is linked to', () => {
+    expect(bridge.postChoices('nobody', 'hi', [[{ text: 'a', reply: 'b' }]])).toEqual({ delivered: 0, reason: 'no-chat' })
+  })
+
+  it('ignores a press from someone who is not allowed', async () => {
+    await store.update(KEY, { sessionId: 's10' })
+    expect(bridge.postChoices('s10', 'pick', [[{ text: 'one', reply: '批准 x' }]]).delivered).toBe(1)
+    await until(() => telegram.calls.some(c => markupOf(c) !== undefined))
+    const data = markupOf(telegram.calls.find(c => markupOf(c) !== undefined)!)!.inline_keyboard[0]![0]!.callback_data
+    telegram.push({ callback_query: { id: 'c2', from: STRANGER, data } })
+    await new Promise(resolve => setTimeout(resolve, 30))
+    expect(harness.prompts).toEqual([])
+    expect(telegram.calls.some(c => c.method === 'answerCallbackQuery')).toBe(true)
+  })
+})
