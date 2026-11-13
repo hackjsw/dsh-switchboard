@@ -1025,7 +1025,8 @@ export function apply(ctx: Context, config: Config): void {
         return bridge.postChoices(rootSession(exec.agent.session.header), input.text, rows)
       },
     }, {
-      when: ({ agent }) => config.agentNotify.get() && bridge.reachesPhone(rootSession(agent.session.header)),
+      // An explicit card the user asked for, not a proactive notice: agentNotify does not gate it.
+      when: ({ agent }) => bridge.reachesPhone(rootSession(agent.session.header)),
     })
   })
 
