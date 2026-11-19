@@ -146,7 +146,7 @@ export interface Channel {
    * platform reads back is compared with what was sent.
    * @returns what was verified, or undefined when the platform has no menu.
    */
-  setMenu(commands: readonly { command: string; description: string }[]): Promise<MenuSync | undefined>
+  setMenu(commands: readonly { command: string; description: string }[], clearOthers?: boolean, chatIds?: readonly string[]): Promise<MenuSync | undefined>
   /** Keep a message in view at the top of the chat, where the platform can, without notifying anyone. */
   pin?(chat: string, messageId: string): Promise<void>
   /** Acknowledge a button press, optionally with a short notice. */
@@ -156,9 +156,10 @@ export interface Channel {
 /** What {@link Channel.setMenu} verified. */
 export interface MenuSync {
   /** When the lists were checked. */
-  verifiedAt: number
-  /** How many scope and language lists were read. */
-  checked: number
+  version: string
+  verifiedAt: string
+  /** Only command names and scopes are recorded; credentials and descriptions stay out. */
+  checked: { scope: { type: string; chat_id?: number }; language: string; before: string[]; after: string[]; inherited: boolean }[]
 }
 
 /** Builds the adapter for a line. */

@@ -7,6 +7,7 @@ import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { LEGACY_LINE } from './lines.ts'
+import type { MenuSync } from './channels/types.ts'
 
 /** What the bridge remembers per chat, keyed by chat key (see lines.ts). */
 export interface ChatBinding {
@@ -69,6 +70,7 @@ interface BindingsFile {
   offsets?: Record<string, number>
   /** Last Session event seq the bridge mirrored, per linked Session, so a restart can catch up. */
   cursors?: Record<string, number>
+  menuSync?: Record<string, MenuSync | { version: string; failedAt: string; error: string }>
   /** The Session each sent message speaks for, per chat key, so a reply to it reaches that Session. */
   routes?: Record<string, Record<string, string>>
   /** Turns of followed Sessions not yet sent in a digest, per chat key. */
@@ -142,6 +144,7 @@ export class BindingStore {
       ...(parsed.pending === undefined ? {} : { pending: parsed.pending }),
       ...(parsed.offsets === undefined ? {} : { offsets: parsed.offsets }),
       ...(parsed.cursors === undefined ? {} : { cursors: parsed.cursors }),
+      ...(parsed.menuSync === undefined ? {} : { menuSync: parsed.menuSync }),
       ...(parsed.routes === undefined ? {} : { routes: parsed.routes }),
       ...(parsed.digests === undefined ? {} : { digests: parsed.digests }),
       ...(parsed.digestDay === undefined ? {} : { digestDay: parsed.digestDay }),
@@ -156,6 +159,14 @@ export class BindingStore {
    */
   offset(line: string = LEGACY_LINE): number {
     return line === LEGACY_LINE ? this.data.offset : this.data.offsets?.[line] ?? 0
+  }
+
+  /** Known chat keys are needed to reconcile their narrower Telegram menus. */
+  chatKeys(): string[] { return Object.keys(this.data.chats) }
+
+  recordMenuSync(bot: string, result: NonNullable<BindingsFile['menuSync']>[string]): Promise<void> {
+    this.data.menuSync = { ...this.data.menuSync, [bot]: result }
+    return this.flush()
   }
 
   /** @returns the chat's binding; an empty object when none is stored. */

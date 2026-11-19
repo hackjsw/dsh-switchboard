@@ -1,6 +1,6 @@
-import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { homedir, tmpdir } from 'node:os'
+import { basename, dirname, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { BindingStore } from '../src/bindings.ts'
 import { ChatLog } from '../src/chatlog.ts'
@@ -91,7 +91,8 @@ class FakeTelegram {
     }
     if (method === 'sendMessage') return ok({ message_id: this.nextMessageId++, chat: { id: params['chat_id'] }, date: 0 })
     if (method.endsWith('MyCommands')) {
-      const scope = (params['scope'] as { type: string } | undefined)?.type ?? 'default'
+      const scoped = params['scope'] as { type: string; chat_id?: number } | undefined
+      const scope = (scoped?.type ?? 'default') + (scoped?.chat_id === undefined ? '' : `:${scoped.chat_id}`)
       const key = `${scope}/${String(params['language_code'])}`
       if (method === 'setMyCommands') {
         if (this.menuFailures > 0) {
@@ -239,7 +240,7 @@ describe('TelegramBridge', () => {
     await until(() => telegram.calls.some(c => c.method === 'sendMessage' && String(c.params['text']).startsWith('Start the new Session')))
     const picker = telegram.calls.find(c => String(c.params['text']).startsWith('Start the new Session'))!
     const rows = (picker.params['reply_markup'] as { inline_keyboard: { text: string; callback_data: string }[][] }).inline_keyboard
-    expect(rows.map(row => row[0]!.text)).toEqual([`⭐ ${tmpdir()}`, '📁 /tmp'])
+    expect(rows.map(row => row[0]!.text)).toEqual([`⭐ ${tmpdir().replace(homedir(), '~')}`, '📁 /tmp'])
     telegram.push({ callback_query: { id: 'q', from: USER, data: rows[0]![0]!.callback_data, message: { message_id: 9, chat: CHAT, date: 0 } } })
     await until(() => harness.created.length === 1)
     expect(harness.created[0]?.cwd).toBe(tmpdir())
@@ -858,11 +859,11 @@ describe('commands', () => {
     expect(telegram.uploads[0]).toMatchObject({ method: 'sendDocument', name: 'notes.txt' })
     telegram.push(text(USER, '/get .'))
     await until(() => telegram.sent().some(t => t.includes('📄 notes.txt')))
-    telegram.push(text(USER, '/get /etc/hosts'))
+    telegram.push(text(USER, `/get ${process.execPath}`))
     await until(() => telegram.sent().filter(t => t.includes('inside the working directory')).length === 1)
     // A symlink inside the workspace cannot reach out of it either.
-    await symlink('/etc', join(dir, 'escape'))
-    telegram.push(text(USER, '/get escape/hosts'))
+    await symlink(dirname(process.execPath), join(dir, 'escape'), 'junction')
+    telegram.push(text(USER, `/get escape/${basename(process.execPath)}`))
     await until(() => telegram.sent().filter(t => t.includes('inside the working directory')).length === 2)
     expect(telegram.uploads).toHaveLength(1)
   })
@@ -1277,9 +1278,9 @@ describe('reasoning effort', () => {
 
   it('sets an exact value from the command and refuses anything else', async () => {
     await store.update(KEY, { sessionId: 's1' })
-    telegram.push(text(USER, '/effort HIGH'))
+    telegram.push(text(USER, '/effort high'))
     await until(() => harness.efforts.length === 1)
-    telegram.push(text(USER, '/effort ultra'))
+    telegram.push(text(USER, '/effort HIGH'))
     await until(() => telegram.sent().length === 2)
     expect(telegram.sent()[1]).toContain('Invalid effort')
     expect(harness.efforts).toHaveLength(1)
@@ -1331,7 +1332,7 @@ describe('Telegram reply buttons', () => {
     bridge.onSessionEvent('s1', { type: 'tool/call', data: { callId: 'c1', name: 'bash', arguments: JSON.stringify({ command: 'ls' }) } })
     await until(() => telegram.calls.some(c => String(c.params['text']).includes('Working')))
     const progress = telegram.calls.find(c => String(c.params['text']).includes('Working'))!
-    expect(progress.params['reply_markup']).toBeUndefined()
+    expect(progress.params['reply_markup']).toEqual({ inline_keyboard: [] })
     bridge.onSessionEvent('s1', { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'all done' }] } } })
     bridge.onSessionEvent('s1', { type: 'turn/end', time: Date.now(), data: { reason: { kind: 'completed' } } })
     await until(() => telegram.sent().some(t => t.includes('all done')))
@@ -1350,6 +1351,23 @@ describe('Telegram reply buttons', () => {
 })
 
 describe('menu', () => {
+  it('merges known chat and administrator scopes and persists safe read-back evidence', async () => {
+    await bridge.stop()
+    await store.update('-2000', { sessionId: 's1' })
+    telegram.menus.set('chat:-2000/zh', [{ command: 'custom', description: 'External' }])
+    telegram.menus.set('chat_administrators:-2000/zh', [{ command: 'admincustom', description: 'External admin' }])
+    await bridge.reconcile()
+    await until(() => telegram.menus.get('chat_administrators:-2000/zh')?.some(c => c.command === 'menu') === true)
+    await until(() => telegram.calls.some(c => c.method === 'getMyCommands' && (c.params['scope'] as { type: string; chat_id?: number }).type === 'chat_administrators' && (c.params['scope'] as { chat_id?: number }).chat_id === -2000 && c.params['language_code'] === 'en'))
+    await store.settled()
+    const persisted = JSON.parse(await readFile(join(dir, 'state.json'), 'utf8')) as { menuSync: Record<string, { checked: { scope: { type: string; chat_id?: number }; before: string[]; after: string[] }[] }> }
+    const evidence = persisted.menuSync['telegram:testbot']!
+    expect(evidence.checked).toContainEqual(expect.objectContaining({ scope: { type: 'chat', chat_id: -2000 }, before: ['custom'], after: expect.arrayContaining(['menu', 'custom']) }))
+    expect(evidence.checked).toContainEqual(expect.objectContaining({ scope: { type: 'chat_administrators', chat_id: -2000 }, before: ['admincustom'] }))
+    expect(JSON.stringify(evidence)).not.toContain('External')
+    expect(telegram.calls.filter(c => c.method === 'deleteMyCommands')).toEqual([])
+  })
+
   it('merges its commands with the ones other tools registered, and deletes nothing', async () => {
     await bridge.stop()
     telegram.calls.length = 0
@@ -1357,6 +1375,7 @@ describe('menu', () => {
     telegram.menus.set('all_group_chats/zh', [{ command: 'other', description: 'Another tool' }])
     await bridge.reconcile()
     await until(() => telegram.calls.some(c => c.method === 'setMyCommands'))
+    await until(() => telegram.menus.get('all_group_chats/zh')?.some(c => c.command === 'menu') === true)
     expect(telegram.calls.filter(c => c.method === 'deleteMyCommands')).toEqual([])
     const group = telegram.menus.get('all_group_chats/zh') ?? []
     expect(group.map(c => c.command)).toEqual(['menu', 'new', 'stop', 'restart', 'model', 'effort', 'mode', 'watch', 'get', 'status', 'digest', 'board', 'away', 'schedule', 'help', 'compact', 'goal', 'other'])
@@ -1406,6 +1425,9 @@ describe('menu', () => {
     const withoutHarness = telegram.calls.filter(c => c.method === 'setMyCommands').length
     expect(withoutHarness).toBeGreaterThan(0)
     harness.commands = commands
+    // The installed .7 baseline retries missing Harness commands after its 60s window.
+    const lines = (bridge as unknown as { live: Map<string, { menuAttemptAt: number }> }).live
+    lines.get('telegram')!.menuAttemptAt = Date.now() - 60_001
     bridge.onSessionEvent('s9', { type: 'turn/start', time: Date.now() })
     await until(() => telegram.calls.filter(c => c.method === 'setMyCommands').length > withoutHarness)
     const menu = telegram.calls.filter(c => c.method === 'setMyCommands').at(-1)!.params['commands'] as { command: string }[]

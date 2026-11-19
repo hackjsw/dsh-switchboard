@@ -553,7 +553,7 @@ export function apply(ctx: Context, config: Config): void {
         else reject(new Error(`the restart launcher exited with ${code ?? 'no code'}`))
       })
     }).catch((error: unknown) => {
-      throw new Error(`the desktop restart launcher failed: ${describe(error)}`)
+      throw new Error(`the desktop restart launcher failed: ${error instanceof Error ? error.message : String(error)}`)
     })
     if (!await waitForFile(readyPath, id, RESTART_READY_MS)) {
       const status = await readRestartStatus(logPath)

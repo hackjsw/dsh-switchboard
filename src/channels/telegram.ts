@@ -264,31 +264,33 @@ export class TelegramChannel implements Channel {
    * for a group scope would hide this one; each existing list is merged with these commands
    * instead, which keeps the commands other tools registered, and read back to confirm it.
    */
-  async setMenu(commands: readonly { command: string; description: string }[]): Promise<MenuSync> {
-    const managed = new Set(commands.map(command => command.command))
-    let checked = 0
-    for (const scope of MENU_SCOPES) {
+  async setMenu(commands: readonly TgCommand[], _clearOthers = false, chatIds: readonly string[] = []): Promise<MenuSync> {
+    const scopes: { type: string; chat_id?: number }[] = MENU_SCOPES.map(type => ({ type }));
+    for (const id of new Set(chatIds)) {
+      if (!/^-?[0-9]+$/u.test(id)) continue;
+      scopes.push({ type: "chat", chat_id: Number(id) });
+      if (Number(id) < 0) scopes.push({ type: "chat_administrators", chat_id: Number(id) });
+    }
+    const checked: MenuSync["checked"] = [];
+    for (const scope of scopes) {
       for (const language of MENU_LANGUAGES) {
-        const before = await this.client.getMyCommands(scope, language)
-        // An empty narrower list inherits the default one; leaving it empty keeps that.
-        if (scope !== 'default' && before.length === 0) {
-          checked += 1
-          continue
+        const params = { scope, ...language === void 0 ? {} : { language_code: language } };
+        const before = await this.client.call<TgCommand[]>("getMyCommands", params);
+        // Empty narrower menus intentionally inherit the default. Preserve that behavior.
+        if (before.length === 0 && (scope.type !== "default" || language !== void 0)) {
+          checked.push({ scope, language: language ?? "", before: [], after: [], inherited: true });
+          continue;
         }
-        const merged = [...commands, ...before.filter(command => !managed.has(command.command))]
-        if (merged.length > MAX_MENU) {
-          throw new Error(`the bot menu would hold ${merged.length} commands; kept the commands others registered and left the menu as it was`)
-        }
-        if (!sameCommands(before, merged)) {
-          await this.client.setMyCommands(merged, scope, language)
-          if (!sameCommands(await this.client.getMyCommands(scope, language), merged)) {
-            throw new Error('the bot menu read back differs from what was sent')
-          }
-        }
-        checked += 1
+        const managed = new Set(commands.map(c => c.command));
+        const merged = [...commands, ...before.filter(c => !managed.has(c.command))];
+        if (merged.length > 100) throw new Error("Telegram command menu exceeds 100 commands; custom commands preserved, sync not applied");
+        if (JSON.stringify(before) !== JSON.stringify(merged)) await this.client.call("setMyCommands", { ...params, commands: merged });
+        const after = await this.client.call<TgCommand[]>("getMyCommands", params);
+        if (JSON.stringify(after) !== JSON.stringify(merged)) throw new Error("Telegram command menu read-back mismatch");
+        checked.push({ scope, language: language ?? "", before: before.map(c => c.command), after: after.map(c => c.command), inherited: false });
       }
     }
-    return { verifiedAt: Date.now(), checked }
+    return { version: "0.5.23-hackjsw.1", verifiedAt: new Date().toISOString(), checked };
   }
 
   async ack(action: InboundAction, notice?: string): Promise<void> {
@@ -300,18 +302,6 @@ export class TelegramChannel implements Channel {
 const MENU_SCOPES = ['default', 'all_private_chats', 'all_group_chats', 'all_chat_administrators']
 /** Languages cleared in each scope; the bot's replies come in these two. */
 const MENU_LANGUAGES = [undefined, 'zh', 'en']
-/** Telegram's own limit on the bot menu, after merging in commands others registered. */
-const MAX_MENU = 100
-
-/** Whether two command lists say the same, in whatever order the platform returned them. */
-function sameCommands(left: readonly TgCommand[], right: readonly TgCommand[]): boolean {
-  if (left.length !== right.length) return false
-  const key = (command: TgCommand): string => `${command.command}\u0000${command.description}`
-  const sortedLeft = left.map(key).sort()
-  const sortedRight = right.map(key).sort()
-  return sortedLeft.every((value, index) => value === sortedRight[index])
-}
-
 function keyboard(rows: readonly (readonly Button[])[]): TgInlineButton[][] {
   return rows.map(row => row.map(button => ({ text: button.text.slice(0, 60), callback_data: button.data })))
 }

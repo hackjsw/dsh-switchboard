@@ -1,3 +1,19 @@
+# hackjsw 自用分支
+
+当前版本 **0.5.23-hackjsw.1**，维护仓库为 https://github.com/hackjsw/dsh-switchboard。以实际安装的 0.5.22-telegram.7 行为为基线，合入上游 0.5.23 的 phonePush，并把已有自定义按钮源码真正纳入发布包。原项目为 [heavenJiang/dsh-switchboard](https://github.com/heavenJiang/dsh-switchboard)，保留原作者署名与 MIT 许可证。
+
+在 DSH 插件页安装本仓库 Releases 中的 **dsh-switchboard-0.5.23-hackjsw.1.tgz**；也可固定到 `github:hackjsw/dsh-switchboard#<commit>` 并允许 prepare 构建。不要用 npm 的 `dsh-switchboard@latest` 替代本分支，那里是没有这些定制的上游包。包名保持不变以复用现有配置与绑定；替换前保留原包及状态备份。先完成插件替换再重启宿主，Web 前端另需刷新。
+
+本分支保留 Windows 桌面管理员 `/restart`、当前会话 `/effort` 精确档位和过期校验、安静回复开关、回复/进度的旧线路旧回合竞态保护。菜单覆盖通用及已知聊天/群管理员窄作用域，按默认/中文/英文合并，不删除其他工具菜单，保留空菜单继承，逐项回读并保存不含凭据和描述的证据，沿用 .7 的一分钟重试间隔。
+
+新增部署 `send_choice_buttons({text, rows})`：最多四行、每行三个按钮；每个按钮的 `text` 是短标签，`reply` 是用户按下时完整发送的本人指令。显式按钮不受主动通知 `agentNotify` 开关限制，但该会话必须能到达手机。`notify_phone` 仍按会话路由；其他插件可用 `ctx.phonePush.available()` 和 `ctx.phonePush.send(text, {source?})` 直接把 Markdown 发到 scheduleChats。后者是插件服务，不是新的 Agent 工具，也不支持按钮行。
+
+保留原有 present 文件/图片发送路径。本分支不增加最终回复 image/audio 块、隐藏媒体动作或原生语音气泡。真实 Telegram 发送和完整桌面重启仍需安装后的受控冒烟检查，仓库测试使用假适配器。
+
+开发命令为 `pnpm test`、`pnpm typecheck:core`、`pnpm build` 和 `pnpm pack`。完整 `pnpm typecheck` 沿用原项目配置，需要旁边有构建完成的 deepseek-harness 类型声明；core 检查覆盖桥接、渠道适配、持久化和支持模块。
+
+---
+
 # 掌上指挥台（Switchboard · dsh-switchboard）
 
 [English](README.md) | 中文
@@ -20,11 +36,13 @@
 
 ## 快速开始
 
-1. 安装到 Web profile：在 Web 侧栏 **插件 → 添加插件** 中填 `dsh-switchboard`，或用命令行：
+1. 安装本分支到实际使用的 profile：在 **插件 → 添加插件** 中填入 [固定版本发布包](https://github.com/hackjsw/dsh-switchboard/releases/download/v0.5.23-hackjsw.1/dsh-switchboard-0.5.23-hackjsw.1.tgz)，或以本机 desktop profile 为例：
 
    ```sh
-   dsh plugin --profile web add dsh-switchboard
+   dsh plugin --profile desktop add "https://github.com/hackjsw/dsh-switchboard/releases/download/v0.5.23-hackjsw.1/dsh-switchboard-0.5.23-hackjsw.1.tgz"
    ```
+
+   如使用其他 profile，请替换 `desktop`；不要改成 npm 的同名包。
 
 2. 打开侧栏 **插件 → 已安装插件 → 掌上指挥台**（也可以点侧栏 **掌上指挥台** 右上角的 **插件设置**），在 **线路** 里添加线路、填写凭据和 **允许的用户**，再填 **默认工作目录**，点 **保存**，即时生效。
 3. 给机器人发 `/whoami` 可以查看自己的用户 ID，把它填进 **允许的用户**。

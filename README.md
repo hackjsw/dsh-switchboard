@@ -1,3 +1,24 @@
+# Switchboard — hackjsw personal fork
+
+This fork is maintained at https://github.com/hackjsw/dsh-switchboard. Version **0.5.23-hackjsw.1** combines upstream 0.5.23 with the behavior of the locally installed 0.5.22-telegram.7 package. The original project and author are [heavenJiang/dsh-switchboard](https://github.com/heavenJiang/dsh-switchboard); the MIT license and original author metadata are retained.
+
+Install the **dsh-switchboard-0.5.23-hackjsw.1.tgz** asset from this fork's Releases in DSH's Plugins page, or use a pinned source such as `github:hackjsw/dsh-switchboard#<commit>` with its prepare build allowed. The npm package `dsh-switchboard@latest` is the upstream project and does not contain these customizations. Keep the package name unchanged so existing Switchboard configuration and bindings continue to apply. Back up the current package and state before replacing it. A package replacement must complete before the running Host is restarted; refresh the Web page for the client half.
+
+Included behavior:
+
+- Administrator-only Windows desktop `/restart`, with worker identity checks, ready/commit handshake, and notification before committing.
+- Session-only `/effort`: accepts exact model-declared effort IDs; stale Session/model picks cannot change another choice.
+- Telegram menu merge for default, private/group/admin, known chat and chat-admin scopes in the default, Chinese and English languages. Existing unrelated commands and empty-menu inheritance are preserved. Each scope is read back; safe evidence and failures are persisted without tokens or descriptions. Retries retain the .7 baseline's one-minute window.
+- `telegramReplyButtons` defaults to false, leaving progress and final replies quiet while keeping menus, approvals, questions and explicit Agent choice cards. Reply/progress ownership and turn tokens prevent old lines or delayed replies from editing newer messages.
+- Agent `send_choice_buttons({text, rows})` with up to four rows of three buttons. Each button has a short `text` label and the complete `reply` sent as the pressing user's instruction. It stays available when proactive `agentNotify` is off, provided the Session reaches a phone.
+- Existing `notify_phone` plus upstream `ctx.phonePush.available()` / `ctx.phonePush.send(text, {source?})` for plugin-originated Markdown to schedule chats. The service does not replace Session-routed Agent notices or offer button rows.
+
+Explicitly presented files continue to use the existing file/image delivery path. Final non-text image/audio blocks and native Telegram voice-note output are not added by this fork. Desktop restart is Windows-desktop-only. Live Telegram delivery and real desktop restart require a controlled smoke check after installation; the repository tests use fake adapters.
+
+Development: `pnpm install`, `pnpm test`, `pnpm typecheck:core`, `pnpm build`, then `pnpm pack`. Full `pnpm typecheck` needs a built sibling deepseek-harness checkout as declared in the existing TypeScript paths. Core checking covers the bridge, adapters, persistence and support modules without the Host/client declarations. Build outputs remain generated; release packages include both bundles and the restart worker.
+
+---
+
 # Switchboard (dsh-switchboard)
 
 English | [中文](README.zh.md)
@@ -16,7 +37,7 @@ A **line** is one bot on one chat platform plus the people allowed to use it. Co
 
 ## Quick start
 
-1. Install into a Web profile: **Plugins → Add plugin** with `dsh-switchboard`, or `dsh plugin --profile web add dsh-switchboard`.
+1. Install this fork into the intended profile: **Plugins → Add plugin** with [the versioned release package](https://github.com/hackjsw/dsh-switchboard/releases/download/v0.5.23-hackjsw.1/dsh-switchboard-0.5.23-hackjsw.1.tgz), or run `dsh plugin --profile desktop add "https://github.com/hackjsw/dsh-switchboard/releases/download/v0.5.23-hackjsw.1/dsh-switchboard-0.5.23-hackjsw.1.tgz"` (replace `desktop` if you use another profile).
 2. Open **Plugins → Installed → Switchboard** (or **Plugin settings** in the sidebar panel), add a line under **Lines**, fill in its credentials and **Allowed users** (send `/whoami` to the bot for your id), set the **Default working directory**, and **Save**. Changes apply immediately.
 
 **Telegram line**: create a bot with [@BotFather](https://t.me/BotFather) (`/newbot`), then **+ Telegram line** and paste the token. Allowed users are Telegram ids or `@usernames`.

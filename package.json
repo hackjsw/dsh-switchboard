@@ -14,13 +14,13 @@
     "remote-control",
     "掌上指挥台"
   ],
-  "version": "0.5.23",
+  "version": "0.5.23-hackjsw.1",
   "icon": "./icon.svg",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/heavenJiang/dsh-switchboard.git"
+    "url": "git+https://github.com/hackjsw/dsh-switchboard.git"
   },
-  "homepage": "https://github.com/heavenJiang/dsh-switchboard#readme",
+  "homepage": "https://github.com/hackjsw/dsh-switchboard#readme",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -71,6 +71,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "prepare": "node scripts/build.mjs",
+    "typecheck:core": "tsc -p tsconfig.core.json --noEmit",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
     "test": "vitest run",
     "prepublishOnly": "pnpm typecheck && pnpm test && pnpm build"
@@ -126,7 +127,7 @@
     }
   },
   "bugs": {
-    "url": "https://github.com/heavenJiang/dsh-switchboard/issues"
+    "url": "https://github.com/hackjsw/dsh-switchboard/issues"
   },
   "publishConfig": {
     "access": "public"
